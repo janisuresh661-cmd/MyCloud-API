@@ -1,4 +1,4 @@
-const MAX_STORAGE = 600 * 1024 * 1024; // 600 MB
+const MAX_STORAGE = 600 * 1024 * 1024;
 
 export default {
   async fetch(request, env) {
@@ -35,10 +35,57 @@ export default {
       });
     }
 
+    // Backblaze B2 connection test
+    if (url.pathname === "/api/b2-test") {
+      try {
+        if (!env.B2_KEY_ID || !env.B2_APPLICATION_KEY) {
+          return json({
+            ok: false,
+            error: "B2 credentials are missing"
+          }, 500);
+        }
+
+        const credentials = btoa(
+          `${env.B2_KEY_ID}:${env.B2_APPLICATION_KEY}`
+        );
+
+        const response = await fetch(
+          "https://api.backblazeb2.com/b2api/v4/b2_authorize_account",
+          {
+            method: "GET",
+            headers: {
+              "Authorization": `Basic ${credentials}`
+            }
+          }
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          return json({
+            ok: false,
+            error: data.message || "Backblaze authorization failed"
+          }, response.status);
+        }
+
+        return json({
+          ok: true,
+          service: "MyCloud API",
+          b2: "connected",
+          bucket: env.B2_BUCKET_NAME,
+          message: "Backblaze B2 connection successful"
+        });
+      } catch (error) {
+        return json({
+          ok: false,
+          error: "B2 connection failed"
+        }, 500);
+      }
+    }
+
     return json({
       ok: true,
-      message: "MyCloud API is running.",
-      next: "Connect D1 and R2"
+      message: "MyCloud API is running."
     });
   }
 };
