@@ -2,12 +2,11 @@ name = "mycloud-api"
 main = "src/index.js"
 compatibility_date = "2026-09-24"
 
-# Add the real D1 database ID after creating the database:
-#
-# [[d1_databases]]
-# binding = "DB"
-# database_name = "mycloud-db"
-# database_id = "PASTE_D1_DATABASE_ID_HERE"
+# D1 database
+[[d1_databases]]
+binding = "DB"
+database_name = "mycloud-db"
+database_id = "ac82ed62-db16-4c37-a547-2d28a29d8d34"
 
 # Add the R2 bucket after creating it:
 #
