@@ -62,11 +62,13 @@ export default {
         const data = await response.json();
 
         if (!response.ok) {
-          return json({
-            ok: false,
-            error: data.message || "Backblaze authorization failed"
-          }, response.status);
-        }
+  return json({
+    ok: false,
+    status: response.status,
+    code: data.code || "unknown",
+    error: data.message || "Backblaze authorization failed"
+  }, response.status);
+}
 
         return json({
           ok: true,
