@@ -88,31 +88,4 @@ export default {
       message: "MyCloud API is running."
     });
   }
-};        if (!response.ok) {
-          return json({
-            ok: false,
-            error: data.message || "Backblaze authorization failed"
-          }, response.status);
-        }
-
-        return json({
-          ok: true,
-          service: "MyCloud API",
-          b2: "connected",
-          bucket: env.B2_BUCKET_NAME,
-          message: "Backblaze B2 connection successful"
-        });
-      } catch (error) {
-        return json({
-          ok: false,
-          error: "B2 connection failed"
-        }, 500);
-      }
-    }
-
-    return json({
-      ok: true,
-      message: "MyCloud API is running."
-    });
-  }
 };
