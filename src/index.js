@@ -656,6 +656,39 @@ const getB2SigningKey = async (secretKey, dateStamp) => {
       });
     }
 
+  if (request.method === "GET" && url.pathname === "/api/files") {
+    const user = await getCurrentUser();
+
+    if (!user) {
+      return json(
+        { ok: false, message: "Not authenticated" },
+        401
+      );
+    }
+
+    const result = await env.DB.prepare(
+      `SELECT
+         id,
+         filename,
+         storage_key,
+         file_size,
+         mime_type,
+         uploaded_at
+       FROM files
+       WHERE user_id = ?
+       ORDER BY uploaded_at DESC`
+    )
+      .bind(user.id)
+      .all();
+
+    return json({
+      ok: true,
+      files: result.results || [],
+      storageUsed: user.storage_used,
+      storageLimit: MAX_STORAGE
+    });
+  }
+    
     if (request.method === "POST" && url.pathname === "/api/files/upload-url") {
   const user = await getCurrentUser();
 
