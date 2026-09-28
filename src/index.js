@@ -1,6 +1,10 @@
 const MAX_STORAGE = 600 * 1024 * 1024;
 const SESSION_DAYS = 30;
 
+const B2_REGION = "us-east-005";
+const B2_SERVICE = "s3";
+const B2_ENDPOINT = "s3.us-east-005.backblazeb2.com";
+
 const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 export default {
@@ -85,6 +89,125 @@ export default {
       return value;
     };
 
+const hmac = async (key, message) => {
+  const cryptoKey = await crypto.subtle.importKey(
+    "raw",
+    key,
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+
+  return new Uint8Array(
+    await crypto.subtle.sign(
+      "HMAC",
+      cryptoKey,
+      new TextEncoder().encode(message)
+    )
+  );
+};
+
+const hmacHex = async (key, message) => {
+  return bytesToHex(await hmac(key, message));
+};
+
+const getB2SigningKey = async (secretKey, dateStamp) => {
+  const kDate = await hmac(
+    new TextEncoder().encode("AWS4" + secretKey),
+    dateStamp
+  );
+
+  const kRegion = await hmac(kDate, B2_REGION);
+  const kService = await hmac(kRegion, B2_SERVICE);
+  return await hmac(kService, "aws4_request");
+};
+
+    const createPresignedUploadUrl = async (objectKey, contentType) => {
+  const bucket = env.B2_BUCKET_NAME;
+  const accessKey = env.B2_KEY_ID;
+  const secretKey = env.B2_APPLICATION_KEY;
+
+  if (!bucket || !accessKey || !secretKey) {
+    throw new Error("B2 configuration is missing");
+  }
+
+  const now = new Date();
+
+  const amzDate =
+    now.toISOString()
+      .replace(/[:-]|\.\d{3}/g, "")
+      .replace("Z", "") + "Z";
+
+  const dateStamp = amzDate.substring(0, 8);
+
+  const credentialScope =
+    `${dateStamp}/${B2_REGION}/${B2_SERVICE}/aws4_request`;
+
+  const host = `${bucket}.${B2_ENDPOINT}`;
+
+  const encodedKey = objectKey
+    .split("/")
+    .map(part => encodeURIComponent(part))
+    .join("/");
+
+  const canonicalUri = `/${encodedKey}`;
+
+  const params = new URLSearchParams();
+
+  params.set("X-Amz-Algorithm", "AWS4-HMAC-SHA256");
+  params.set("X-Amz-Credential", `${accessKey}/${credentialScope}`);
+  params.set("X-Amz-Date", amzDate);
+  params.set("X-Amz-Expires", "900");
+  params.set("X-Amz-SignedHeaders", "host");
+
+  const canonicalQueryString =
+    [...params.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, value]) =>
+        `${encodeURIComponent(key)}=${encodeURIComponent(value)}`
+      )
+      .join("&");
+
+  const canonicalHeaders =
+    `host:${host}\n`;
+
+  const signedHeaders = "host";
+  const payloadHash = "UNSIGNED-PAYLOAD";
+
+  const canonicalRequest = [
+    "PUT",
+    canonicalUri,
+    canonicalQueryString,
+    canonicalHeaders,
+    signedHeaders,
+    payloadHash
+  ].join("\n");
+
+  const canonicalRequestHash = await hashText(canonicalRequest);
+
+  const stringToSign = [
+    "AWS4-HMAC-SHA256",
+    amzDate,
+    credentialScope,
+    canonicalRequestHash
+  ].join("\n");
+
+  const signingKey =
+    await getB2SigningKey(secretKey, dateStamp);
+
+  const signature =
+    await hmacHex(signingKey, stringToSign);
+
+  const uploadUrl =
+    `https://${host}${canonicalUri}?${canonicalQueryString}&X-Amz-Signature=${signature}`;
+
+  return {
+    uploadUrl,
+    objectKey,
+    contentType
+  };
+};
+    
     const hashText = async (text) => {
       const data = new TextEncoder().encode(text);
 
@@ -532,6 +655,111 @@ export default {
         }
       });
     }
+
+    if (request.method === "POST" && url.pathname === "/api/files/upload-url") {
+  const user = await getCurrentUser();
+
+  if (!user) {
+    return json(
+      { ok: false, message: "Not authenticated" },
+      401
+    );
+  }
+
+  try {
+    const body = await request.json();
+
+    const filename =
+      typeof body.filename === "string"
+        ? body.filename.trim()
+        : "";
+
+    const fileSize = Number(body.fileSize);
+    const contentType =
+      typeof body.contentType === "string" &&
+      body.contentType.trim()
+        ? body.contentType.trim()
+        : "application/octet-stream";
+
+    if (!filename) {
+      return json(
+        { ok: false, message: "Filename is required" },
+        400
+      );
+    }
+
+    if (
+      !Number.isSafeInteger(fileSize) ||
+      fileSize <= 0
+    ) {
+      return json(
+        { ok: false, message: "Invalid file size" },
+        400
+      );
+    }
+
+    if (fileSize > MAX_STORAGE) {
+      return json(
+        {
+          ok: false,
+          message: "File is larger than the 600 MB storage limit"
+        },
+        400
+      );
+    }
+
+    const storageUsed = Number(user.storage_used || 0);
+    const remainingStorage = MAX_STORAGE - storageUsed;
+
+    if (fileSize > remainingStorage) {
+      return json(
+        {
+          ok: false,
+          message: "Not enough storage available",
+          storageUsed,
+          storageLimit: MAX_STORAGE,
+          remainingStorage
+        },
+        400
+      );
+    }
+
+    const safeName = filename
+      .replace(/[^a-zA-Z0-9._-]/g, "_")
+      .substring(0, 180);
+
+    const objectKey =
+      `users/${user.id}/${crypto.randomUUID()}-${safeName}`;
+
+    const upload = await createPresignedUploadUrl(
+      objectKey,
+      contentType
+    );
+
+    return json({
+      ok: true,
+      uploadUrl: upload.uploadUrl,
+      objectKey: upload.objectKey,
+      filename,
+      fileSize,
+      contentType,
+      storageUsed,
+      storageLimit: MAX_STORAGE,
+      remainingStorage
+    });
+
+  } catch (error) {
+    return json(
+      {
+        ok: false,
+        message: error instanceof Error
+          ? error.message
+          : "Could not create upload URL"
+      },
+      500
+    );
+  }
+}
 
     // -----------------------------
     // FORGOT PASSWORD
