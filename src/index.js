@@ -889,6 +889,178 @@ const verifyB2Object = async (objectKey) => {
   }
 }
 
+// --------------------------------
+// COMPLETE FILE UPLOAD
+// --------------------------------
+
+if (
+  request.method === "POST" &&
+  url.pathname === "/api/files/complete"
+) {
+  const user = await getCurrentUser();
+
+  if (!user) {
+    return json(
+      { ok: false, message: "Not authenticated" },
+      401
+    );
+  }
+
+  try {
+    const body = await request.json();
+
+    const objectKey =
+      typeof body.objectKey === "string"
+        ? body.objectKey.trim()
+        : "";
+
+    if (!objectKey) {
+      return json(
+        { ok: false, message: "Object key is required" },
+        400
+      );
+    }
+
+    // Make sure the object belongs to this user.
+    if (!objectKey.startsWith(`users/${user.id}/`)) {
+      return json(
+        { ok: false, message: "Invalid object key" },
+        403
+      );
+    }
+
+    const pending = await env.DB.prepare(
+      `SELECT
+         id,
+         filename,
+         file_size,
+         mime_type,
+         object_key
+       FROM pending_uploads
+       WHERE user_id = ?
+         AND object_key = ?`
+    )
+      .bind(user.id, objectKey)
+      .first();
+
+    if (!pending) {
+      return json(
+        { ok: false, message: "Pending upload not found" },
+        404
+      );
+    }
+
+    // Verify that the file really exists in Backblaze B2.
+    const b2Response = await verifyB2Object(objectKey);
+
+    if (!b2Response.ok) {
+      return json(
+        {
+          ok: false,
+          message: "File upload could not be verified"
+        },
+        400
+      );
+    }
+
+    const actualSize = Number(
+      b2Response.headers.get("content-length") || 0
+    );
+
+    if (actualSize !== pending.file_size) {
+      return json(
+        {
+          ok: false,
+          message: "Uploaded file size does not match"
+        },
+        400
+      );
+    }
+
+    const currentUser = await env.DB.prepare(
+      `SELECT storage_used
+       FROM users
+       WHERE id = ?`
+    )
+      .bind(user.id)
+      .first();
+
+    const storageUsed = Number(
+      currentUser?.storage_used || 0
+    );
+
+    if (storageUsed + pending.file_size > MAX_STORAGE) {
+      return json(
+        {
+          ok: false,
+          message: "Storage limit exceeded"
+        },
+        400
+      );
+    }
+
+    const newStorageUsed =
+      storageUsed + pending.file_size;
+
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO files
+         (user_id, filename, storage_key, file_size, mime_type)
+         VALUES (?, ?, ?, ?, ?)`
+      ).bind(
+        user.id,
+        pending.filename,
+        pending.object_key,
+        pending.file_size,
+        pending.mime_type
+      ),
+
+      env.DB.prepare(
+        `UPDATE users
+         SET storage_used = ?
+         WHERE id = ?`
+      ).bind(
+        newStorageUsed,
+        user.id
+      ),
+
+      env.DB.prepare(
+        `DELETE FROM pending_uploads
+         WHERE id = ?`
+      ).bind(
+        pending.id
+      )
+    ]);
+
+    return json({
+      ok: true,
+      message: "File uploaded successfully",
+      file: {
+        filename: pending.filename,
+        fileSize: pending.file_size,
+        mimeType: pending.mime_type,
+        storageKey: pending.object_key
+      },
+      storageUsed: newStorageUsed,
+      storageLimit: MAX_STORAGE,
+      remainingStorage:
+        MAX_STORAGE - newStorageUsed
+    });
+
+  } catch (error) {
+    return json(
+      {
+        ok: false,
+        message:
+          error instanceof Error
+            ? error.message
+            : "Could not complete file upload"
+      },
+      500
+    );
+  }
+}
+    
     // -----------------------------
     // FORGOT PASSWORD
     // -----------------------------
