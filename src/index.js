@@ -769,6 +769,20 @@ const getB2SigningKey = async (secretKey, dateStamp) => {
       contentType
     );
 
+    await env.DB.prepare(
+  `INSERT INTO pending_uploads
+   (user_id, object_key, filename, file_size, mime_type)
+   VALUES (?, ?, ?, ?, ?)`
+)
+  .bind(
+    user.id,
+    objectKey,
+    filename,
+    fileSize,
+    contentType
+  )
+  .run();
+
     return json({
       ok: true,
       uploadUrl: upload.uploadUrl,
