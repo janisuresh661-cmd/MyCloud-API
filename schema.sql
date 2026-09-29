@@ -28,3 +28,17 @@ CREATE TABLE IF NOT EXISTS download_history (
 
 CREATE INDEX IF NOT EXISTS idx_files_user_id ON files(user_id);
 CREATE INDEX IF NOT EXISTS idx_history_user_id ON download_history(user_id);
+
+CREATE TABLE IF NOT EXISTS pending_uploads (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  object_key TEXT NOT NULL UNIQUE,
+  filename TEXT NOT NULL,
+  file_size INTEGER NOT NULL,
+  mime_type TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_pending_uploads_user_id
+ON pending_uploads(user_id);
