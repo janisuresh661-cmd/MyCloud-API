@@ -122,6 +122,87 @@ const getB2SigningKey = async (secretKey, dateStamp) => {
   return await hmac(kService, "aws4_request");
 };
 
+const verifyB2Object = async (objectKey) => {
+  const bucket = env.B2_BUCKET_NAME;
+  const accessKey = env.B2_KEY_ID;
+  const secretKey = env.B2_APPLICATION_KEY;
+
+  if (!bucket || !accessKey || !secretKey) {
+    throw new Error("B2 configuration is missing");
+  }
+
+  const now = new Date();
+
+  const amzDate = now.toISOString()
+    .replace(/[:-]|\.\d{3}/g, "")
+    .replace("Z", "") + "Z";
+
+  const dateStamp = amzDate.substring(0, 8);
+
+  const credentialScope =
+    `${dateStamp}/${B2_REGION}/${B2_SERVICE}/aws4_request`;
+
+  const host = `${bucket}.${B2_ENDPOINT}`;
+
+  const encodedKey = objectKey
+    .split("/")
+    .map(part => encodeURIComponent(part))
+    .join("/");
+
+  const canonicalUri = `/${encodedKey}`;
+  const canonicalQueryString = "";
+
+  const canonicalHeaders =
+    `host:${host}\n` +
+    `x-amz-date:${amzDate}\n`;
+
+  const signedHeaders = "host;x-amz-date";
+  const payloadHash = await hashText("");
+
+  const canonicalRequest = [
+    "HEAD",
+    canonicalUri,
+    canonicalQueryString,
+    canonicalHeaders,
+    signedHeaders,
+    payloadHash
+  ].join("\n");
+
+  const canonicalRequestHash =
+    await hashText(canonicalRequest);
+
+  const stringToSign = [
+    "AWS4-HMAC-SHA256",
+    amzDate,
+    credentialScope,
+    canonicalRequestHash
+  ].join("\n");
+
+  const signingKey =
+    await getB2SigningKey(secretKey, dateStamp);
+
+  const signature =
+    await hmacHex(signingKey, stringToSign);
+
+  const authorization =
+    `AWS4-HMAC-SHA256 Credential=${accessKey}/${credentialScope}, ` +
+    `SignedHeaders=${signedHeaders}, ` +
+    `Signature=${signature}`;
+
+  const response = await fetch(
+    `https://${host}${canonicalUri}`,
+    {
+      method: "HEAD",
+      headers: {
+        "X-Amz-Date": amzDate,
+        "Authorization": authorization
+      }
+    }
+  );
+
+  return response;
+};
+    
     const createPresignedUploadUrl = async (objectKey, contentType) => {
   const bucket = env.B2_BUCKET_NAME;
   const accessKey = env.B2_KEY_ID;
